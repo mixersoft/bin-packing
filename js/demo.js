@@ -16,6 +16,8 @@
 
 *******************************************************************************/
 
+
+
 Demo = {
 
   init: function() {
@@ -28,7 +30,8 @@ Demo = {
       sort:     $('#sort'),
       color:    $('#color'),
       ratio:    $('#ratio'),
-      nofit:    $('#nofit')
+      nofit:    $('#nofit'),
+      xhr_json:	$('#xhr-json'),
     };
 
     if (!Demo.el.canvas.getContext) // no support for canvas
@@ -169,6 +172,12 @@ Demo = {
   blocks: {
 
     examples: {
+    	
+      JSON: [
+      	{ w: 500, h: 200, num:  1 },
+        { w: 250, h: 200, num:  1 },
+        { w: 50,  h: 50,  num: 20 }
+      ],	
 
       simple: [
         { w: 500, h: 200, num:  1 },
@@ -244,8 +253,46 @@ Demo = {
       },
 
       change: function() {
+      	if (Demo.el.examples.val()=='JSON' && Demo.el.xhr_json.val()){
+      		var cb = function(blocks){
+		        Demo.el.blocks.val(Demo.blocks.serialize(blocks));
+		        Demo.run();
+      		}
+      		return Demo.blocks.examples.getJSON(cb);
+      	}
         Demo.el.blocks.val(Demo.blocks.serialize(Demo.blocks.examples.current()));
         Demo.run();
+      },
+      
+      getJSON: function(cb){
+      	var url = Demo.el.xhr_json.val();
+      	$.getJSON(url, function(data) {
+      		PAGE = {jsonData: {castingCall: data.response.castingCall }};
+      		
+      		Util.parseCC(null, 'force');
+      		
+      		var items = CFG['util'].Auditions,
+      			scale_binpack = 0.1,
+      			scale_scoreFn = function(score){
+      				return Math.max(0,score-3)*1+1;
+      			},
+      			tally = {},
+      			blocks = [], // [{w:, h:, num:}]
+      			key;	
+ 
+			$.each(items, function(id,o) {
+				var scale = scale_scoreFn(o.score); 		// scale size by score
+				key = o.W*scale +'x'+o.H*scale;			
+				tally[key] = !tally[key] ? 1 : tally[key]+1;
+			});
+			
+			for (var dimString in tally) {
+				var dim = dimString.split('x');
+				blocks.push({w:Math.round(dim[0]*scale_binpack), h:Math.round(dim[1]*scale_binpack), num:tally[dimString]});
+			}
+			
+			cb(blocks);
+      	});
       }
     },
 
@@ -297,3 +344,108 @@ Demo = {
 
 $(Demo.init);
 
+
+var Util = new function(){}
+Util.Auditions = 'empty';
+Util.getImgSrcBySize = function(src, size){
+    size = size || 'tn';
+    var parts = Util.parseSrcString(src);
+    if (size && !parts.dirname.match(/.thumbs\/$/)) 
+        parts.dirname += '.thumbs/';
+    return parts.dirname + (size ? size + '~' : '') + parts.filename + (parts.crop ? '~' + parts.crop : '');
+};
+Util.parseSrcString = function(src){
+    var i = src.lastIndexOf('/');
+    var name = {
+        dirname: '',
+        size: '',
+        filename: '',
+        crop: ''
+    };
+    name.dirname = src.substring(0, i + 1);
+    var parts = src.substring(i + 1).split('~');
+        switch (parts.length) {
+            case 3:
+                name.size = parts[0];
+                name.filename = parts[1];
+                name.crop = parts[2];
+                break;
+            case 2:
+                if (parts[0].length == 2) {
+                    name.size = parts[0];
+                    name.filename = parts[1];
+                }
+                else {
+                    name.filename = parts[0];
+                    name.crop = parts[1];
+                }
+                break;
+            case 1:
+                name.filename = parts[0];
+                break;
+            default:
+                name.filename = src.substring(i + 1);
+                break;
+        }
+        return name;
+};
+Util.getCC = function(src, success){
+	/*
+	 * POST should include begin/end timestamps to filter photostream
+	 */
+	var qs = {'debug':0};
+	$.ajax({
+		url: src,
+		data: qs,
+		dataType: 'json',
+		success: function(json, status, o){
+			try {
+				PAGE.jsonData = json.response;
+				delete(PAGE.jsonData.lookups);
+				delete(PAGE.jsonData.filter);
+				delete(PAGE.jsonData.profile);
+			} catch (ex) {		}
+			success.call(this, json, status, o);
+		},
+	}).fail(function(json, status, o){
+		console.error("getCC failed");
+	});
+}
+Util.parseCC = function(cc, force){
+	cc = cc || PAGE.jsonData.castingCall;
+	if (CFG['util'].Auditions !== 'empty' && !force) return Util.Auditions;
+	var i, oSrc, score, id, 
+		parsedAuditions = {},
+		auditions = cc.CastingCall.Auditions.Audition;
+		
+	if (cc.CastingCall.Auditions.ShotType=='event_group'){
+		auditions = PAGE.jsonData.shot_CastingCall.CastingCall.Auditions.Audition;
+	}	
+
+	for (i in auditions) {
+		id = auditions[i].Photo.id;
+		parsedAuditions[id] = $.extend({
+			id: id,
+			score: parseInt(auditions[i].Photo.Fix.Score),
+			caption: auditions[i].Photo.Caption,
+			dateTaken: auditions[i].Photo.DateTaken, 
+			ts: auditions[i].Photo.TS,
+		}, auditions[i].Photo.Img.Src);
+	}
+	CFG['util'].Auditions = parsedAuditions;	// make global
+}
+
+Util.tokenReplace = function(string, prefix, tokens) {
+	for (var i in tokens) {
+		string = string.replace(prefix+i,tokens[i]);
+	}
+	var empty=new RegExp('\\'+prefix+'\\w*\\s{0,1}','g');
+	string = string.replace(empty, '' );
+	return string;
+}
+
+
+
+CFG = typeof(CFG)=='undefined' ? {} : CFG;
+
+CFG['util'] = $.extend(CFG['util'] || {}, Util);
