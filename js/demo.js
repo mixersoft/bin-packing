@@ -32,6 +32,7 @@ Demo = {
       ratio:    $('#ratio'),
       nofit:    $('#nofit'),
       xhr_json:	$('#xhr-json'),
+      perpage:	$('#perpage'),
     };
 
     if (!Demo.el.canvas.getContext) // no support for canvas
@@ -43,6 +44,8 @@ Demo = {
     Demo.el.size.change(Demo.run);
     Demo.el.sort.change(Demo.run);
     Demo.el.color.change(Demo.run);
+    Demo.el.xhr_json.change(Util.getCC);
+    Demo.el.perpage.change(Util.getCC);
     Demo.el.examples.change(Demo.blocks.examples.change);
     Demo.run();
 
@@ -55,7 +58,6 @@ Demo = {
   //---------------------------------------------------------------------------
 
   run: function() {
-
     var blocks = Demo.blocks.deserialize(Demo.el.blocks.val());
     var packer = Demo.packer();
 
@@ -107,12 +109,15 @@ Demo = {
     a       : function (a,b) { return b.area - a.area; },
     max     : function (a,b) { return Math.max(b.w, b.h) - Math.max(a.w, a.h); },
     min     : function (a,b) { return Math.min(b.w, b.h) - Math.min(a.w, a.h); },
+    rating : function (a,b) { return !!a.score && (b.score - a.score); },
+    dateTaken       : function (a,b) { return !!a.dateTaken && (a.dateTaken - b.dateTaken); },
+
 
     height  : function (a,b) { return Demo.sort.msort(a, b, ['h', 'w']);               },
     width   : function (a,b) { return Demo.sort.msort(a, b, ['w', 'h']);               },
     area    : function (a,b) { return Demo.sort.msort(a, b, ['a', 'h', 'w']);          },
     maxside : function (a,b) { return Demo.sort.msort(a, b, ['max', 'min', 'h', 'w']); },
-
+    
     msort: function(a, b, criteria) { /* sort by multiple criteria */
       var diff, n;
       for (n = 0 ; n < criteria.length ; n++) {
@@ -253,47 +258,10 @@ Demo = {
       },
 
       change: function() {
-      	if (Demo.el.examples.val()=='JSON' && Demo.el.xhr_json.val()){
-      		var cb = function(blocks){
-		        Demo.el.blocks.val(Demo.blocks.serialize(blocks));
-		        Demo.run();
-      		}
-      		return Demo.blocks.examples.getJSON(cb);
-      	}
+      	if (Util.getCC()!==false) return;
         Demo.el.blocks.val(Demo.blocks.serialize(Demo.blocks.examples.current()));
         Demo.run();
       },
-      
-      getJSON: function(cb){
-      	var url = Demo.el.xhr_json.val();
-      	$.getJSON(url, function(data) {
-      		PAGE = {jsonData: {castingCall: data.response.castingCall }};
-      		
-      		Util.parseCC(null, 'force');
-      		
-      		var items = CFG['util'].Auditions,
-      			scale_binpack = 0.1,
-      			scale_scoreFn = function(score){
-      				return Math.max(0,score-3)*1+1;
-      			},
-      			tally = {},
-      			blocks = [], // [{w:, h:, num:}]
-      			key;	
- 
-			$.each(items, function(id,o) {
-				var scale = scale_scoreFn(o.score); 		// scale size by score
-				key = o.W*scale +'x'+o.H*scale;			
-				tally[key] = !tally[key] ? 1 : tally[key]+1;
-			});
-			
-			for (var dimString in tally) {
-				var dim = dimString.split('x');
-				blocks.push({w:Math.round(dim[0]*scale_binpack), h:Math.round(dim[1]*scale_binpack), num:tally[dimString]});
-			}
-			
-			cb(blocks);
-      	});
-      }
     },
 
     deserialize: function(val) {
@@ -303,10 +271,20 @@ Demo = {
         if (block.length >= 2)
           result.push({w: parseInt(block[0]), h: parseInt(block[1]), num: (block.length == 2 ? 1 : parseInt(block[2])) });
       }
-      var expanded = [];
+      var item, expanded = [];
       for(i = 0 ; i < result.length ; i++) {
-        for(j = 0 ; j < result[i].num ; j++)
-          expanded.push({w: result[i].w, h: result[i].h, area: result[i].w * result[i].h});
+        for(j = 0 ; j < result[i].num ; j++) {
+          item = {w: result[i].w, h: result[i].h, area: result[i].w * result[i].h};
+          try {
+	          if (!!Util.lookups['sort']) {
+	          	// add back score and dateTaken so we can sort by these values
+	          	var extras = Util.lookups['sort'][item.w+'x'+item.h][j];
+	          	item.dateTaken = parseInt(extras.dateTaken);
+	          	item.score = parseFloat(extras.score);	
+	          }
+          } catch (ex) {}
+          expanded.push(item);
+        }
       }
       return expanded;
     },
@@ -347,6 +325,7 @@ $(Demo.init);
 
 var Util = new function(){}
 Util.Auditions = 'empty';
+Util.lookups = {};
 Util.getImgSrcBySize = function(src, size){
     size = size || 'tn';
     var parts = Util.parseSrcString(src);
@@ -389,27 +368,59 @@ Util.parseSrcString = function(src){
         }
         return name;
 };
-Util.getCC = function(src, success){
-	/*
-	 * POST should include begin/end timestamps to filter photostream
-	 */
-	var qs = {'debug':0};
-	$.ajax({
-		url: src,
-		data: qs,
-		dataType: 'json',
-		success: function(json, status, o){
-			try {
-				PAGE.jsonData = json.response;
-				delete(PAGE.jsonData.lookups);
-				delete(PAGE.jsonData.filter);
-				delete(PAGE.jsonData.profile);
-			} catch (ex) {		}
-			success.call(this, json, status, o);
-		},
-	}).fail(function(json, status, o){
-		console.error("getCC failed");
-	});
+Util.getCC = function(cb){
+	if (Demo.el.examples.val()=='JSON' && Demo.el.xhr_json.val()){
+  		var cbcb = function(blocks){
+	        Demo.el.blocks.val(Demo.blocks.serialize(blocks));
+	        $('body').css('cursor', 'default');
+	        Demo.run();
+	        if ($.isFunction(cb)) cb();
+  		}
+      	var url = Demo.el.xhr_json.val(),
+      		perpage = Demo.el.perpage.val();
+      	url = url.replace('/.json', '/perpage:'+perpage+'/.json');	
+      	$('body').css('cursor', 'wait');
+      	return $.getJSON(url, function(data) {
+      		PAGE = {jsonData: {castingCall: data.response.castingCall }};
+      		Util.parseCC(null, 'force');
+      		// convert to a "blocks" def // [{w:, h:, num:}] which can be serialized/deserialized
+      		var items = CFG['util'].Auditions,
+      			tally = {},
+      			blocks = [], // [{w:, h:, num:}]
+      			key;	
+ 				var scale, i=0;
+ 			Util.lookups['sort'] = {};	
+			$.each(items, function(id,o) {
+				// scale = Util.scale.position(i); 		// scale size by index
+				scale = Util.scale.score(o.score); 		// scale size by score
+				key = Math.round(o.W*scale*Util.scale.binpack()) +'x'+Math.round(o.H*scale*Util.scale.binpack());			
+				tally[key] = !tally[key] ? 1 : tally[key]+1;
+				Util.lookups['sort'][key] = !Util.lookups['sort'][key] ? [] : Util.lookups['sort'][key]; 
+				Util.lookups['sort'][key].push({score: o.score, dateTaken:o.ts});
+			});
+			
+			for (var dimString in tally) {
+				var dim = dimString.split('x');
+				blocks.push({w:dim[0], h:dim[1], num:tally[dimString]});
+			}
+			
+			cbcb(blocks);
+      	});
+  } 
+  return false;
+}
+Util.scale = {
+	binpack: function(){
+		return 0.1;
+	},
+	score: function(score){
+		return Math.max(0,score-2)*0.4+1;
+	},
+	position: function(i) {
+		if (i==0) return 2;
+		if (i==1) return 1.5;
+		return 1;
+	},
 }
 Util.parseCC = function(cc, force){
 	cc = cc || PAGE.jsonData.castingCall;
