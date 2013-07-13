@@ -33,6 +33,9 @@ Demo = {
       nofit:    $('#nofit'),
       xhr_json:	$('#xhr-json'),
       perpage:	$('#perpage'),
+      page:		$('#page'),
+      username:	$('#username'),
+      rating:	$('#rating'),
     };
 
     if (!Demo.el.canvas.getContext) // no support for canvas
@@ -46,6 +49,9 @@ Demo = {
     Demo.el.color.change(Demo.run);
     Demo.el.xhr_json.change(Util.getCC);
     Demo.el.perpage.change(Util.getCC);
+    Demo.el.page.change(Util.getCC);
+    Demo.el.username.change(Util.getCC);
+    Demo.el.rating.change(Util.getCC);
     Demo.el.examples.change(Demo.blocks.examples.change);
     Demo.run();
 
@@ -275,14 +281,10 @@ Demo = {
       for(i = 0 ; i < result.length ; i++) {
         for(j = 0 ; j < result[i].num ; j++) {
           item = {w: result[i].w, h: result[i].h, area: result[i].w * result[i].h};
-          try {
-	          if (!!Util.lookups['sort']) {
-	          	// add back score and dateTaken so we can sort by these values
-	          	var extras = Util.lookups['sort'][item.w+'x'+item.h][j];
-	          	item.dateTaken = parseInt(extras.dateTaken);
-	          	item.score = parseFloat(extras.score);	
-	          }
-          } catch (ex) {}
+	      if (!!Util.lookups['sort']) {
+	      		var key = item.w+'x'+item.h;
+	      		item = Util.addSortAttrs(key, j, item); 
+	      }
           expanded.push(item);
         }
       }
@@ -326,6 +328,165 @@ $(Demo.init);
 var Util = new function(){}
 Util.Auditions = 'empty';
 Util.lookups = {};
+/*
+ * add back score and dateTaken which were lost in serialize
+ * so we can sort by these values
+ * key is a WxD from serialize, e.g. 64x48
+ */
+Util.addSortAttrs = function(key, index, o){
+	try { 	
+      	var extras = Util.lookups['sort'][key][index];
+      	o.dateTaken = parseInt(extras.dateTaken);
+      	o.score = parseFloat(extras.score);	
+    } catch (ex) {} 	
+    return o;
+}
+/*
+ * Scaling functions
+ * 
+ * The goal is to HIGHLIGHT 1 or more top-rated photos in a layout, 
+ * this is generally achieved by making them bigger.
+ * Note that the HIGHLIGHT photos should generally be full-frame
+ * however the remaining photos can be cropped to make the layout work.
+ * However, there is generally a minW/minH below which the thumbnail is just too small to be useful
+ */
+Util.scale = {
+	// this is to scale the binpack rectangles in the demo
+	binpack: function(){
+		return 0.1;
+	},
+	// scale a photo based on the score/rating, top rated photos are bigger
+	score: function(score){
+		return Math.max(0,score-2)*0.4+1;
+	},
+	// scale a photo based on sort order. 
+	// i.e. the first few photos are bigger, the rest can be cropped as necessary 
+	position: function(i) {
+		if (i==0) return 2;
+		if (i==1) return 1.5;
+		return 1;
+	},
+}
+/*
+ * get the JSON data for the photo gallery
+ * to activate, set Examples = JSON
+ */
+Util.getCC = function(cb){
+	if (Demo.el.examples.val()=='JSON' && Demo.el.xhr_json.val()){
+  		var cbcb = function(blocks){
+	        Demo.el.blocks.val(Demo.blocks.serialize(blocks));
+	        $('body').css('cursor', 'default');
+	        Demo.run();
+	        if ($.isFunction(cb)) cb();
+  		}
+      	var url = Demo.el.xhr_json.val(),
+      	url = Util.tokenReplace(url,'$',{username:Demo.el.username.val()}); 	
+      	url = Util.setNamedParams(url, {
+      			perpage : Demo.el.perpage.val(),
+      			page : Demo.el.page.val(),
+      			rating : Demo.el.rating.val()=='false' ? false : Demo.el.rating.val(),
+      		});	
+      	$('body').css('cursor', 'wait');
+      	return $.getJSON(url, function(data) {
+      		PAGE = {jsonData: {castingCall: data.response.castingCall }};
+      		Util.parseCC(null, 'force');
+      		// convert to a "blocks" def // [{w:, h:, num:}] which can be serialized/deserialized
+      		var items = CFG['util'].Auditions,
+      			tally = {},
+      			blocks = [], // [{w:, h:, num:}]
+      			key;	
+ 				var scale, i=0;
+ 			Util.lookups['sort'] = {};	
+			$.each(items, function(id,o) {
+				// scale = Util.scale.position(i); 		// scale size by index
+				scale = Util.scale.score(o.score); 		// scale size by score
+				key = Math.round(o.W*scale*Util.scale.binpack()) +'x'+Math.round(o.H*scale*Util.scale.binpack());			
+				tally[key] = !tally[key] ? 1 : tally[key]+1;
+				Util.lookups['sort'][key] = !Util.lookups['sort'][key] ? [] : Util.lookups['sort'][key]; 
+				Util.lookups['sort'][key].push({score: o.score, dateTaken:o.ts});
+			});
+			
+			for (var dimString in tally) {
+				var dim = dimString.split('x');
+				blocks.push({w:dim[0], h:dim[1], num:tally[dimString]});
+			}
+			
+			cbcb(blocks);
+      	});
+  } 
+  return false;
+}
+Util.parseCC = function(cc, force){
+	cc = cc || PAGE.jsonData.castingCall;
+	if (CFG['util'].Auditions !== 'empty' && !force) return Util.Auditions;
+	var i, oSrc, score, id, 
+		parsedAuditions = {},
+		auditions = cc.CastingCall.Auditions.Audition;
+		
+	if (cc.CastingCall.Auditions.ShotType=='event_group'){
+		auditions = PAGE.jsonData.shot_CastingCall.CastingCall.Auditions.Audition;
+	}	
+
+	for (i in auditions) {
+		id = auditions[i].Photo.id;
+		parsedAuditions[id] = $.extend({
+			id: id,
+			score: parseInt(auditions[i].Photo.Fix.Score),
+			caption: auditions[i].Photo.Caption,
+			dateTaken: auditions[i].Photo.DateTaken, 
+			ts: auditions[i].Photo.TS,
+		}, auditions[i].Photo.Img.Src);
+	}
+	CFG['util'].Auditions = parsedAuditions;	// make global
+}
+
+Util.setNamedParams = function(uri, namedData) {
+	if (!namedData) return uri;
+    var name = [];
+    // stringify nameData params
+    for (var i in namedData) {
+        // update or append?
+		var regexS = '(\/'+i+'[^:\/]*:)([^\/]*)';
+		var regex = new RegExp(regexS);
+		var match = regex.exec(uri);
+		if (match) {
+			if (namedData[i] === null) {
+				// remove named param
+				uri = uri.replace(match[0], '');
+			} else {
+				// update nameData param
+				uri = uri.replace(match[0], match[1]+namedData[i]);
+			}
+		} else if (namedData[i] !== null) {
+			// append nameData param
+        	name.push(i + ':' + namedData[i]);
+		}
+    }            
+    
+    if (name.length) {
+    	// append named params AFTER RequestHandler TYPE, if any
+    	var requestHandler = uri.match(/^(.*)\/(\.\w*)$/);
+        if (requestHandler) {
+        	uri = requestHandler[1] + '/' + name.join('/') + '/' + requestHandler[2];
+        } else {
+        	uri = uri + '/' + name.join('/');
+        }
+    }
+	return uri;
+};
+
+Util.tokenReplace = function(string, prefix, tokens) {
+	for (var i in tokens) {
+		string = string.replace(prefix+i,tokens[i]);
+	}
+	var empty=new RegExp('\\'+prefix+'\\w*\\s{0,1}','g');
+	string = string.replace(empty, '' );
+	return string;
+}
+
+/*
+ * for showing actual JPGs from JSON response
+ */
 Util.getImgSrcBySize = function(src, size){
     size = size || 'tn';
     var parts = Util.parseSrcString(src);
@@ -333,6 +494,7 @@ Util.getImgSrcBySize = function(src, size){
         parts.dirname += '.thumbs/';
     return parts.dirname + (size ? size + '~' : '') + parts.filename + (parts.crop ? '~' + parts.crop : '');
 };
+
 Util.parseSrcString = function(src){
     var i = src.lastIndexOf('/');
     var name = {
@@ -368,92 +530,6 @@ Util.parseSrcString = function(src){
         }
         return name;
 };
-Util.getCC = function(cb){
-	if (Demo.el.examples.val()=='JSON' && Demo.el.xhr_json.val()){
-  		var cbcb = function(blocks){
-	        Demo.el.blocks.val(Demo.blocks.serialize(blocks));
-	        $('body').css('cursor', 'default');
-	        Demo.run();
-	        if ($.isFunction(cb)) cb();
-  		}
-      	var url = Demo.el.xhr_json.val(),
-      		perpage = Demo.el.perpage.val();
-      	url = url.replace('/.json', '/perpage:'+perpage+'/.json');	
-      	$('body').css('cursor', 'wait');
-      	return $.getJSON(url, function(data) {
-      		PAGE = {jsonData: {castingCall: data.response.castingCall }};
-      		Util.parseCC(null, 'force');
-      		// convert to a "blocks" def // [{w:, h:, num:}] which can be serialized/deserialized
-      		var items = CFG['util'].Auditions,
-      			tally = {},
-      			blocks = [], // [{w:, h:, num:}]
-      			key;	
- 				var scale, i=0;
- 			Util.lookups['sort'] = {};	
-			$.each(items, function(id,o) {
-				// scale = Util.scale.position(i); 		// scale size by index
-				scale = Util.scale.score(o.score); 		// scale size by score
-				key = Math.round(o.W*scale*Util.scale.binpack()) +'x'+Math.round(o.H*scale*Util.scale.binpack());			
-				tally[key] = !tally[key] ? 1 : tally[key]+1;
-				Util.lookups['sort'][key] = !Util.lookups['sort'][key] ? [] : Util.lookups['sort'][key]; 
-				Util.lookups['sort'][key].push({score: o.score, dateTaken:o.ts});
-			});
-			
-			for (var dimString in tally) {
-				var dim = dimString.split('x');
-				blocks.push({w:dim[0], h:dim[1], num:tally[dimString]});
-			}
-			
-			cbcb(blocks);
-      	});
-  } 
-  return false;
-}
-Util.scale = {
-	binpack: function(){
-		return 0.1;
-	},
-	score: function(score){
-		return Math.max(0,score-2)*0.4+1;
-	},
-	position: function(i) {
-		if (i==0) return 2;
-		if (i==1) return 1.5;
-		return 1;
-	},
-}
-Util.parseCC = function(cc, force){
-	cc = cc || PAGE.jsonData.castingCall;
-	if (CFG['util'].Auditions !== 'empty' && !force) return Util.Auditions;
-	var i, oSrc, score, id, 
-		parsedAuditions = {},
-		auditions = cc.CastingCall.Auditions.Audition;
-		
-	if (cc.CastingCall.Auditions.ShotType=='event_group'){
-		auditions = PAGE.jsonData.shot_CastingCall.CastingCall.Auditions.Audition;
-	}	
-
-	for (i in auditions) {
-		id = auditions[i].Photo.id;
-		parsedAuditions[id] = $.extend({
-			id: id,
-			score: parseInt(auditions[i].Photo.Fix.Score),
-			caption: auditions[i].Photo.Caption,
-			dateTaken: auditions[i].Photo.DateTaken, 
-			ts: auditions[i].Photo.TS,
-		}, auditions[i].Photo.Img.Src);
-	}
-	CFG['util'].Auditions = parsedAuditions;	// make global
-}
-
-Util.tokenReplace = function(string, prefix, tokens) {
-	for (var i in tokens) {
-		string = string.replace(prefix+i,tokens[i]);
-	}
-	var empty=new RegExp('\\'+prefix+'\\w*\\s{0,1}','g');
-	string = string.replace(empty, '' );
-	return string;
-}
 
 
 

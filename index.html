@@ -27,13 +27,39 @@
 	<div class='xhr-json'>
 		<label for='xhr-json'>JSON src</label>
 		<input id='xhr-json' class='copy-paste' onclick='this.select();' type="text" size="28" 
-			value="http://snappi-dev/person/odesk_photos/12345678-1111-0000-0000-venice------/.json">
+			value="http://snappi-dev/person/odesk_photos/$username/perpage:x/page:x/rating:x/.json">
 		</input>
 	</div>
-    <div class='options'>
+	<div class='options'>
+		<label for='username'>Username</label>
+		<select id='username'>
+	        <option value='venice'>   	Venice      </option>
+	        <option value='paris'>     	Paris 		</option>
+	        <option value='sardinia'>   Sardinia    </option>
+	        <option value='newyork'>    New York    </option>
+	        <option value='sfbay'>     	SF Bay      </option>
+	      </select>
+	</div>
+	<div class='options'>
+		<label for='rating'>Min Rating</label>
+		<select id='rating'>
+	        <option value='1'>   none      </option>
+	        <option value='2'>    2+    </option>
+	        <option value='3'>    3+    </option>
+	        <option value='4'>    4+      </option>
+	        <option value='5'>    5      </option>
+	    </select>
+	</div>
+	<div class='options'>
 		<label for='perpage'>Perpage</label>
 		<input id='perpage' class='copy-paste' onclick='this.select();' type="text" size="3" 
 			value="48">
+		</input>
+	</div>
+    <div class='options'>
+		<label for='page'>Page</label>
+		<input id='page' class='copy-paste' onclick='this.select();' type="text" size="3" 
+			value="1">
 		</input>
 	</div>  
       
